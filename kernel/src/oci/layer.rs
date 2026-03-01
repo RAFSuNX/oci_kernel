@@ -51,21 +51,25 @@ fn strip_gzip_header(data: &[u8]) -> Result<&[u8], LayerError> {
             return Err(LayerError::DecompressFailed);
         }
         let xlen = u16::from_le_bytes([data[offset], data[offset + 1]]) as usize;
-        offset += 2 + xlen;
+        offset += 2;
+        if offset + xlen > data.len() { return Err(LayerError::DecompressFailed); }
+        offset += xlen;
     }
     if flags & 0x08 != 0 {
         // FNAME — null-terminated
         while offset < data.len() && data[offset] != 0 {
             offset += 1;
         }
-        offset += 1;
+        if offset >= data.len() { return Err(LayerError::DecompressFailed); }
+        offset += 1; // skip null terminator
     }
     if flags & 0x10 != 0 {
         // FCOMMENT — null-terminated
         while offset < data.len() && data[offset] != 0 {
             offset += 1;
         }
-        offset += 1;
+        if offset >= data.len() { return Err(LayerError::DecompressFailed); }
+        offset += 1; // skip null terminator
     }
     if flags & 0x02 != 0 {
         // FHCRC
