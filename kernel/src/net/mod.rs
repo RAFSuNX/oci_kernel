@@ -1,14 +1,22 @@
-pub mod virtio_net;
-pub mod stack;
-pub mod tls;
-pub mod http;
+// Hardware-dependent modules: only compiled for the bare-metal kernel.
+#[cfg(not(test))] pub mod virtio_net;
+#[cfg(not(test))] pub mod stack;
+#[cfg(not(test))] pub mod tls;
+#[cfg(not(test))] pub mod http;
 
+// Pure-logic modules: always compiled (have unit tests).
+pub mod vswitch;
+
+#[cfg(not(test))]
 use spin::{Mutex, Once};
+#[cfg(not(test))]
 use stack::NetworkStack;
 
+#[cfg(not(test))]
 static NETWORK: Once<Mutex<NetworkStack>> = Once::new();
 
 /// Called once from kernel_main after memory::init.
+#[cfg(not(test))]
 pub fn init(phys_offset: u64) {
     let device = virtio_net::VirtioNet::probe(phys_offset)
         .expect("virtio-net device not found — start QEMU with -device virtio-net-pci");
@@ -22,6 +30,7 @@ pub fn init(phys_offset: u64) {
 }
 
 /// Poll the network stack. Called from the timer interrupt handler.
+#[cfg(not(test))]
 pub fn poll() {
     if let Some(net) = NETWORK.get() {
         if let Some(mut stack) = net.try_lock() {

@@ -15,7 +15,9 @@ extern crate alloc;
 #[cfg(not(test))] mod interrupts;
 #[cfg(not(test))] mod memory;
 #[cfg(not(test))] mod process;
-#[cfg(not(test))] mod net;
+// net is always compiled: vswitch.rs has unit tests.
+// Hardware-specific submodules are gated inside net/mod.rs.
+mod net;
 
 // Pure-logic modules are always compiled (they have unit tests).
 mod oci;
