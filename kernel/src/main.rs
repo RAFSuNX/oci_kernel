@@ -25,6 +25,7 @@ mod fs;
 mod isolation;
 mod container;
 mod host;
+mod config;
 
 #[cfg(not(test))]
 use bootloader_api::{BootInfo, entry_point};
