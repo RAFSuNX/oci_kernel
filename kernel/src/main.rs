@@ -17,6 +17,8 @@ fn kernel_main(_boot_info: &'static mut BootInfo) -> ! {
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
+    // force-unlock in case panic fired while serial lock was held
+    unsafe { serial::SERIAL.force_unlock() };
     serial_println!("KERNEL PANIC: {}", info);
     loop {}
 }
