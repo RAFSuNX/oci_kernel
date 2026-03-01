@@ -20,7 +20,7 @@ pub fn init(
         Page::range_inclusive(start_page, end_page)
     };
 
-    let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
+    let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE;
     for page in page_range {
         let frame = frame_allocator
             .allocate_frame()

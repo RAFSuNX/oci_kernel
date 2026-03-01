@@ -10,30 +10,38 @@ use x86_64::{
 };
 
 /// A FrameAllocator that returns usable frames from the bootloader's memory map.
+/// Uses region_idx + frame_offset to achieve O(1) amortized allocation
+/// instead of rebuilding the iterator from scratch on every call.
 pub struct BootInfoFrameAllocator {
     memory_regions: &'static MemoryRegions,
-    next: usize,
+    region_idx: usize,
+    frame_offset: u64,
 }
 
 impl BootInfoFrameAllocator {
     pub unsafe fn new(memory_regions: &'static MemoryRegions) -> Self {
-        Self { memory_regions, next: 0 }
-    }
-
-    fn usable_frames(&self) -> impl Iterator<Item = PhysFrame> + '_ {
-        self.memory_regions
-            .iter()
-            .filter(|r| r.kind == MemoryRegionKind::Usable)
-            .flat_map(|r| (r.start..r.end).step_by(4096))
-            .map(|addr| PhysFrame::containing_address(PhysAddr::new(addr)))
+        Self { memory_regions, region_idx: 0, frame_offset: 0 }
     }
 }
 
 unsafe impl FrameAllocator<Size4KiB> for BootInfoFrameAllocator {
     fn allocate_frame(&mut self) -> Option<PhysFrame> {
-        let frame = self.usable_frames().nth(self.next);
-        self.next += 1;
-        frame
+        loop {
+            let region = self.memory_regions
+                .iter()
+                .filter(|r| r.kind == MemoryRegionKind::Usable)
+                .nth(self.region_idx)?;
+
+            let region_frames = (region.end - region.start) / 4096;
+            if self.frame_offset < region_frames {
+                let addr = region.start + self.frame_offset * 4096;
+                self.frame_offset += 1;
+                return Some(PhysFrame::containing_address(PhysAddr::new(addr)));
+            }
+            // Current region exhausted — advance to next
+            self.region_idx += 1;
+            self.frame_offset = 0;
+        }
     }
 }
 
