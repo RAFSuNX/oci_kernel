@@ -67,6 +67,7 @@ extern "x86-interrupt" fn gpf_handler(frame: InterruptStackFrame, code: u64) {
 }
 
 extern "x86-interrupt" fn timer_handler(_frame: InterruptStackFrame) {
+    crate::net::poll();
     x86_64::instructions::interrupts::without_interrupts(|| {
         unsafe { PICS.lock().notify_end_of_interrupt(InterruptIndex::Timer as u8) };
     });

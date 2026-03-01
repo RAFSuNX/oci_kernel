@@ -9,6 +9,7 @@ mod gdt;
 mod interrupts;
 mod memory;
 mod process;
+mod net;
 
 use bootloader_api::{BootInfo, entry_point};
 use core::panic::PanicInfo;
@@ -31,6 +32,9 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         let v = vec![1u64, 2, 3, 42];
         serial_println!("[OK] Heap: {:?}", v);
     }
+    let phys_offset = boot_info.physical_memory_offset.into_option()
+        .expect("physical memory offset not provided");
+    net::init(phys_offset);
     loop {
         x86_64::instructions::hlt();
     }
