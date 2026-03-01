@@ -1,6 +1,8 @@
 [unstable]
-build-std = ["core", "compiler_builtins", "alloc"]
-build-std-features = ["compiler-builtins-mem"]
+# json-target-spec is needed for the custom kernel target JSON file.
+# build-std is NOT set here because it would apply globally (including
+# `cargo test --target x86_64-unknown-linux-gnu`) causing duplicate lang
+# items.  It is passed explicitly in the Makefile build command instead.
 json-target-spec = true
 
 [build]

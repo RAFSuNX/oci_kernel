@@ -1,11 +1,14 @@
 extern crate alloc;
 use alloc::{string::String, vec::Vec, format};
 
+// Network stack is only available in the real kernel, not during host unit tests.
+#[cfg(not(test))]
 use crate::net::http::{self, HttpError};
 use super::manifest::{ImageManifest, ParseError};
 
 #[derive(Debug)]
 pub enum RegistryError {
+    #[cfg(not(test))]
     Http(HttpError),
     Parse(ParseError),
     Auth,
@@ -13,6 +16,7 @@ pub enum RegistryError {
     Utf8,
 }
 
+#[cfg(not(test))]
 impl From<HttpError> for RegistryError {
     fn from(e: HttpError) -> Self { RegistryError::Http(e) }
 }
@@ -21,11 +25,13 @@ impl From<ParseError> for RegistryError {
     fn from(e: ParseError) -> Self { RegistryError::Parse(e) }
 }
 
+#[cfg(not(test))]
 pub struct Registry {
     pub host:  String,
     token: Option<String>,
 }
 
+#[cfg(not(test))]
 impl Registry {
     pub fn new(host: &str) -> Self {
         Self { host: host.into(), token: None }
