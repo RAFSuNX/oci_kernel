@@ -9,7 +9,7 @@ pub struct Scheduler {
 
 impl Scheduler {
     pub fn new() -> Self {
-        Self { queue: Vec::new(), current: 0 }
+        Self { queue: Vec::new(), current: usize::MAX }
     }
 
     pub fn add(&mut self, pid: ProcessId, state: ProcessState) {
@@ -20,7 +20,7 @@ impl Scheduler {
         let len = self.queue.len();
         if len == 0 { return None; }
         for _ in 0..len {
-            self.current = (self.current + 1) % len;
+            self.current = self.current.wrapping_add(1) % len;
             let (pid, state) = self.queue[self.current];
             if state == ProcessState::Ready || state == ProcessState::Running {
                 return Some(pid);
