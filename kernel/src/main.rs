@@ -2,12 +2,19 @@
 #![no_main]
 #![feature(abi_x86_interrupt)]
 
+extern crate alloc;
+
 mod serial;
 mod gdt;
 mod interrupts;
+mod memory;
 
 use bootloader_api::{BootInfo, entry_point};
 use core::panic::PanicInfo;
+use linked_list_allocator::LockedHeap;
+
+#[global_allocator]
+static ALLOCATOR: LockedHeap = LockedHeap::empty();
 
 entry_point!(kernel_main);
 
