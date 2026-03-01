@@ -2,7 +2,7 @@ KERNEL = kernel
 TARGET = x86_64-oci-kernel
 IMAGE  = oci-kernel.img
 
-.PHONY: build qemu debug clean
+.PHONY: build image qemu debug clean
 
 build:
 	cargo build --manifest-path $(KERNEL)/Cargo.toml
