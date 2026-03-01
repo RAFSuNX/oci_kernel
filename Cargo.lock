@@ -163,6 +163,7 @@ dependencies = [
  "linked_list_allocator",
  "miniz_oxide",
  "pic8259",
+ "rand_core",
  "serde_json",
  "smoltcp",
  "spin",
@@ -218,6 +219,12 @@ checksum = "21b2ebcf727b7760c461f091f9f0f539b77b8e87f2fd88131e7f1b433b3cece4"
 dependencies = [
  "proc-macro2",
 ]
+
+[[package]]
+name = "rand_core"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 
 [[package]]
 name = "raw-cpuid"

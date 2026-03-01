@@ -1,5 +1,7 @@
 pub mod virtio_net;
 pub mod stack;
+pub mod tls;
+pub mod http;
 
 use spin::{Mutex, Once};
 use stack::NetworkStack;
