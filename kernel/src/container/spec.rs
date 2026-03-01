@@ -2,7 +2,7 @@ extern crate alloc;
 use alloc::{string::String, vec::Vec};
 
 /// How host ports map to container ports.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PortMapping {
     pub host:      u16,
     pub container: u16,
@@ -16,7 +16,7 @@ pub enum AccessMode {
 }
 
 /// A host-directory or named-volume mount.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct VolumeMount {
     pub source: String, // host path or volume name
     pub target: String, // path inside container

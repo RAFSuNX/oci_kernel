@@ -1,6 +1,6 @@
 extern crate alloc;
 
-use super::spec::{ContainerSpec, ResourceLimits};
+use super::spec::ContainerSpec;
 use crate::isolation::{
     namespace::Namespace,
     cgroup::CgroupHandle,
