@@ -10,6 +10,7 @@ mod interrupts;
 mod memory;
 mod process;
 mod net;
+mod oci;
 
 use bootloader_api::{BootInfo, entry_point};
 use core::panic::PanicInfo;
