@@ -21,6 +21,7 @@ extern crate alloc;
 mod oci;
 mod fs;
 mod isolation;
+mod container;
 
 #[cfg(not(test))]
 use bootloader_api::{BootInfo, entry_point};
