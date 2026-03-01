@@ -20,6 +20,7 @@ extern crate alloc;
 // Pure-logic modules are always compiled (they have unit tests).
 mod oci;
 mod fs;
+mod isolation;
 
 #[cfg(not(test))]
 use bootloader_api::{BootInfo, entry_point};
