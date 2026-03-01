@@ -8,6 +8,7 @@ mod serial;
 mod gdt;
 mod interrupts;
 mod memory;
+mod process;
 
 use bootloader_api::{BootInfo, entry_point};
 use core::panic::PanicInfo;
