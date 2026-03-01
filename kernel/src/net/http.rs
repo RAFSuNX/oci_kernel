@@ -124,11 +124,12 @@ pub fn parse_chunked(mut data: &[u8]) -> Result<Vec<u8>, HttpError> {
             break; // Last chunk.
         }
 
-        if data.len() < chunk_size + 2 {
+        let end = chunk_size.checked_add(2).ok_or(HttpError::InvalidChunk)?;
+        if data.len() < end {
             return Err(HttpError::InvalidChunk);
         }
         result.extend_from_slice(&data[..chunk_size]);
-        data = &data[chunk_size + 2..]; // skip trailing \r\n
+        data = &data[end..];
     }
     Ok(result)
 }

@@ -7,6 +7,17 @@ use smoltcp::wire::IpEndpoint;
 
 use crate::net::NETWORK;
 
+static NEXT_PORT: core::sync::atomic::AtomicU16 =
+    core::sync::atomic::AtomicU16::new(49152);
+
+static POLL_TICKS: core::sync::atomic::AtomicU64 =
+    core::sync::atomic::AtomicU64::new(0);
+
+fn next_instant() -> smoltcp::time::Instant {
+    let t = POLL_TICKS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    smoltcp::time::Instant::from_millis(t as i64)
+}
+
 /// Minimal kernel RNG using RDRAND instruction.
 pub struct KernelRng;
 
@@ -77,38 +88,55 @@ pub fn https_request(host: &str, port: u16, request: &[u8]) -> Result<Vec<u8>, T
         stack.sockets.add(socket)
     };
 
+    // Pick a local port from the atomic counter.
+    let local_port = NEXT_PORT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    let local_port = if local_port < 49152 { 49152 } else { local_port };
+
     // Connect.
     // Destructure to split borrows: iface and sockets are independent fields.
-    {
+    let connect_failed = {
         let crate::net::stack::NetworkStack { ref mut iface, ref mut sockets, .. } = *stack;
         let cx = iface.context();
         let socket = sockets.get_mut::<TcpSocket>(tcp_handle);
-        socket
-            .connect(cx, endpoint, 49152u16)
-            .map_err(|_| TlsConnectError::TcpFailed)?;
+        socket.connect(cx, endpoint, local_port).is_err()
+    };
+    if connect_failed {
+        stack.sockets.remove(tcp_handle);
+        return Err(TlsConnectError::TcpFailed);
     }
 
     // Poll until the connection is established.
     for _ in 0..100_000 {
-        stack.poll(smoltcp::time::Instant::from_millis(0));
+        stack.poll(next_instant());
         let socket = stack.sockets.get::<TcpSocket>(tcp_handle);
         if socket.is_active() {
             break;
         }
     }
 
-    // Send the request.
+    // Check that the connection is actually active after the poll loop.
     {
+        let socket = stack.sockets.get::<TcpSocket>(tcp_handle);
+        if !socket.is_active() {
+            stack.sockets.remove(tcp_handle);
+            return Err(TlsConnectError::TcpFailed);
+        }
+    }
+
+    // Send the request.
+    let send_failed = {
         let socket = stack.sockets.get_mut::<TcpSocket>(tcp_handle);
-        socket
-            .send_slice(request)
-            .map_err(|_| TlsConnectError::TcpFailed)?;
+        socket.send_slice(request).is_err()
+    };
+    if send_failed {
+        stack.sockets.remove(tcp_handle);
+        return Err(TlsConnectError::TcpFailed);
     }
 
     // Poll and accumulate the response until the server closes the connection.
     let mut response = Vec::new();
     loop {
-        stack.poll(smoltcp::time::Instant::from_millis(0));
+        stack.poll(next_instant());
         let socket = stack.sockets.get_mut::<TcpSocket>(tcp_handle);
         let mut chunk = [0u8; 1024];
         match socket.recv_slice(&mut chunk) {
