@@ -67,12 +67,16 @@ extern "x86-interrupt" fn gpf_handler(frame: InterruptStackFrame, code: u64) {
 }
 
 extern "x86-interrupt" fn timer_handler(_frame: InterruptStackFrame) {
-    unsafe { PICS.lock().notify_end_of_interrupt(InterruptIndex::Timer as u8) };
+    x86_64::instructions::interrupts::without_interrupts(|| {
+        unsafe { PICS.lock().notify_end_of_interrupt(InterruptIndex::Timer as u8) };
+    });
 }
 
 extern "x86-interrupt" fn keyboard_handler(_frame: InterruptStackFrame) {
     use x86_64::instructions::port::Port;
     let mut port: Port<u8> = Port::new(0x60);
     let _scancode: u8 = unsafe { port.read() };
-    unsafe { PICS.lock().notify_end_of_interrupt(InterruptIndex::Keyboard as u8) };
+    x86_64::instructions::interrupts::without_interrupts(|| {
+        unsafe { PICS.lock().notify_end_of_interrupt(InterruptIndex::Keyboard as u8) };
+    });
 }
