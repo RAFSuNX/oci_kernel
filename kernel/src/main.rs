@@ -18,11 +18,18 @@ static ALLOCATOR: LockedHeap = LockedHeap::empty();
 
 entry_point!(kernel_main);
 
-fn kernel_main(_boot_info: &'static mut BootInfo) -> ! {
+fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     serial::init();
     serial_println!("OCI Kernel 0.1.0 booting...");
-    gdt::init();          serial_println!("[OK] GDT");
-    interrupts::init();   serial_println!("[OK] IDT + PIC");
+    gdt::init();              serial_println!("[OK] GDT");
+    interrupts::init();       serial_println!("[OK] IDT + PIC");
+    memory::init(boot_info);  serial_println!("[OK] Memory");
+    // smoke test: heap works
+    {
+        use alloc::vec;
+        let v = vec![1u64, 2, 3, 42];
+        serial_println!("[OK] Heap: {:?}", v);
+    }
     loop {
         x86_64::instructions::hlt();
     }
