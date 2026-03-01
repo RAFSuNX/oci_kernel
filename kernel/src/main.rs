@@ -4,6 +4,7 @@
 
 mod serial;
 mod gdt;
+mod interrupts;
 
 use bootloader_api::{BootInfo, entry_point};
 use core::panic::PanicInfo;
@@ -13,9 +14,11 @@ entry_point!(kernel_main);
 fn kernel_main(_boot_info: &'static mut BootInfo) -> ! {
     serial::init();
     serial_println!("OCI Kernel 0.1.0 booting...");
-    gdt::init();
-    serial_println!("[OK] GDT");
-    loop {}
+    gdt::init();          serial_println!("[OK] GDT");
+    interrupts::init();   serial_println!("[OK] IDT + PIC");
+    loop {
+        x86_64::instructions::hlt();
+    }
 }
 
 #[panic_handler]
