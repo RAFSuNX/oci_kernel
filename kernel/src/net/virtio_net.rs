@@ -114,9 +114,11 @@ const BUF_SIZE: usize = PKT_SIZE + HDR_LEN;
 pub struct VirtioNet {
     pub mac:  [u8; 6],
     io_base:  u16,
+    phys_offset: u64,
     // RX queue (index 0)
     rx_queue:     &'static mut Virtqueue,
-    rx_bufs:      [[u8; BUF_SIZE]; QUEUE_SIZE],
+    // Bug 2 fix: Box so heap address is stable even when struct moves
+    rx_bufs:      alloc::boxed::Box<[[u8; BUF_SIZE]; QUEUE_SIZE]>,
     rx_last_used: u16,
     // TX queue (index 1)
     tx_queue: &'static mut Virtqueue,
@@ -125,7 +127,8 @@ pub struct VirtioNet {
 
 impl VirtioNet {
     /// Scan PCI bus for virtio-net device (vendor 0x1AF4, device 0x1000).
-    pub fn probe(_phys_offset: u64) -> Option<Self> {
+    // Bug 1 fix: remove _ prefix so phys_offset is used
+    pub fn probe(phys_offset: u64) -> Option<Self> {
         for bus in 0u8..=255 {
             for dev in 0u8..32 {
                 let val = pci_read32(bus, dev, 0, 0);
@@ -133,29 +136,28 @@ impl VirtioNet {
                 let vendor = (val & 0xFFFF) as u16;
                 let device = (val >> 16) as u16;
                 if vendor == 0x1AF4 && device == 0x1000 {
-                    return Self::init(bus, dev);
+                    // Bug 1 fix: pass phys_offset to init
+                    return Self::init(bus, dev, phys_offset);
                 }
             }
         }
         None
     }
 
-    fn init(bus: u8, dev: u8) -> Option<Self> {
+    // Bug 1 fix: accept phys_offset parameter
+    fn init(bus: u8, dev: u8, phys_offset: u64) -> Option<Self> {
         // Enable bus master + I/O space access in command register (offset 0x04)
         let cmd = pci_read32(bus, dev, 0, 0x04);
         pci_write32(bus, dev, 0, 0x04, cmd | 0x5); // I/O enable (bit 0) + bus master (bit 2)
 
         // BAR0 is I/O space for legacy virtio; mask off lower 2 bits (I/O indicator)
         let bar0 = pci_read32(bus, dev, 0, 0x10) & !0x3;
-        let io_base = bar0 as u16;
-
-        // Read MAC address from device config space
-        let mut mac = [0u8; 6];
-        for i in 0..6 {
-            mac[i] = unsafe {
-                PortReadOnly::<u8>::new(io_base + VIRTIO_NET_CONFIG_MAC + i as u16).read()
-            };
+        // Bug 3 fix: check BAR0 fits in u16 before casting
+        if bar0 > 0xFFFF {
+            crate::serial_println!("virtio-net: BAR0 {:#x} too large for u16", bar0);
+            return None;
         }
+        let io_base = bar0 as u16;
 
         // Virtio device initialisation sequence
         unsafe {
@@ -164,6 +166,17 @@ impl VirtioNet {
             // 2. Acknowledge + Driver
             PortWriteOnly::<u8>::new(io_base + VIRTIO_PCI_STATUS)
                 .write(VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
+        }
+
+        // Bug 5 fix: Read MAC address AFTER writing ACKNOWLEDGE | DRIVER status
+        let mut mac = [0u8; 6];
+        for i in 0..6 {
+            mac[i] = unsafe {
+                PortReadOnly::<u8>::new(io_base + VIRTIO_NET_CONFIG_MAC + i as u16).read()
+            };
+        }
+
+        unsafe {
             // 3. Negotiate features: request MAC feature only
             let host_features = PortReadOnly::<u32>::new(io_base + VIRTIO_PCI_HOST_FEATURES).read();
             let guest_features = host_features & VIRTIO_NET_F_MAC;
@@ -177,36 +190,57 @@ impl VirtioNet {
         let rx_queue: &'static mut Virtqueue = alloc_virtqueue();
         let tx_queue: &'static mut Virtqueue = alloc_virtqueue();
 
-        let mut vdev = VirtioNet {
-            mac,
-            io_base,
-            rx_queue,
-            rx_bufs: unsafe { core::mem::zeroed() },
-            rx_last_used: 0,
-            tx_queue,
-            tx_buf: [0u8; BUF_SIZE],
-        };
+        // Bug 1 fix: convert virtual queue addresses to physical for DMA
+        let rx_phys = (rx_queue as *mut Virtqueue as u64) - phys_offset;
+        let tx_phys = (tx_queue as *mut Virtqueue as u64) - phys_offset;
 
-        // Set up RX queue (queue index 0)
-        let rx_phys = vdev.rx_queue as *mut Virtqueue as u64;
-        vdev.setup_queue(0, rx_phys);
+        // Bug 2 fix: allocate rx_bufs on heap so addresses stay stable after struct moves
+        let mut rx_bufs: alloc::boxed::Box<[[u8; BUF_SIZE]; QUEUE_SIZE]> =
+            alloc::boxed::Box::new([[0u8; BUF_SIZE]; QUEUE_SIZE]);
+
+        // Set up RX queue (queue index 0) - must happen before building descriptors
+        // setup_queue needs io_base and phys_offset; call helper directly here
+        unsafe {
+            Port::<u16>::new(io_base + VIRTIO_PCI_QUEUE_SELECT).write(0);
+            // Bug 1 fix: use physical address / 4096 for PFN
+            Port::<u32>::new(io_base + VIRTIO_PCI_QUEUE_ADDR)
+                .write((rx_phys / 4096) as u32);
+        }
 
         // Fill all RX descriptors with receive buffers and add them to available ring
+        // Bug 2 fix: use heap addresses from the Box (stable, won't move)
+        // Bug 1 fix: subtract phys_offset for DMA addresses
         for i in 0..QUEUE_SIZE {
-            let buf_ptr = vdev.rx_bufs[i].as_ptr() as u64;
-            vdev.rx_queue.desc[i] = VirtqDesc {
-                addr:  buf_ptr,
+            let buf_ptr = rx_bufs[i].as_mut_ptr() as u64;
+            rx_queue.desc[i] = VirtqDesc {
+                addr:  buf_ptr - phys_offset,
                 len:   BUF_SIZE as u32,
                 flags: VIRTQ_DESC_F_WRITE,
                 next:  0,
             };
-            vdev.rx_queue.avail_ring[i] = i as u16;
+            rx_queue.avail_ring[i] = i as u16;
         }
-        vdev.rx_queue.avail_idx = QUEUE_SIZE as u16;
+        rx_queue.avail_idx = QUEUE_SIZE as u16;
 
         // Set up TX queue (queue index 1)
-        let tx_phys = vdev.tx_queue as *mut Virtqueue as u64;
-        vdev.setup_queue(1, tx_phys);
+        unsafe {
+            Port::<u16>::new(io_base + VIRTIO_PCI_QUEUE_SELECT).write(1);
+            // Bug 1 fix: use physical address / 4096 for PFN
+            Port::<u32>::new(io_base + VIRTIO_PCI_QUEUE_ADDR)
+                .write((tx_phys / 4096) as u32);
+        }
+
+        // Bug 1 fix: store phys_offset in struct
+        let vdev = VirtioNet {
+            mac,
+            io_base,
+            phys_offset,
+            rx_queue,
+            rx_bufs,
+            rx_last_used: 0,
+            tx_queue,
+            tx_buf: [0u8; BUF_SIZE],
+        };
 
         // Signal driver ready
         unsafe {
@@ -283,7 +317,8 @@ impl<'a> TxToken for VirtioTxToken<'a> {
         let result = f(&mut self.device.tx_buf[HDR_LEN..HDR_LEN + len]);
 
         // Build TX descriptor for the whole buffer (header + frame)
-        let tx_buf_ptr = self.device.tx_buf.as_ptr() as u64;
+        // Bug 1 fix: subtract phys_offset for DMA address
+        let tx_buf_ptr = (self.device.tx_buf.as_ptr() as u64) - self.device.phys_offset;
         let total_len  = (HDR_LEN + len) as u32;
         self.device.tx_queue.desc[0] = VirtqDesc {
             addr:  tx_buf_ptr,
@@ -318,7 +353,10 @@ impl Device for VirtioNet {
 
         let desc_idx  = used_elem.id as usize;
         let pkt_len   = used_elem.len as usize;
-        let payload_len = pkt_len.saturating_sub(HDR_LEN);
+
+        // Bug 4 fix: guard against out-of-bounds desc_idx and cap payload_len
+        if desc_idx >= QUEUE_SIZE { return None; }
+        let payload_len = pkt_len.saturating_sub(HDR_LEN).min(PKT_SIZE);
 
         // Copy packet payload into an owned Vec before any further borrow of self
         let packet = Vec::from(&self.rx_bufs[desc_idx][HDR_LEN..HDR_LEN + payload_len]);
