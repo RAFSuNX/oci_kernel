@@ -1,6 +1,5 @@
 extern crate alloc;
 use alloc::{string::String, vec::Vec, format};
-use alloc::string::ToString;
 
 use crate::net::http::{self, HttpError};
 use super::manifest::{ImageManifest, ParseError};
@@ -51,24 +50,15 @@ impl Registry {
     /// Fetch the image manifest for `image:tag`.
     pub fn fetch_manifest(&self, image: &str, tag: &str) -> Result<ImageManifest, RegistryError> {
         let path = format!("/v2/{}/manifests/{}", image, tag);
-        let headers: &[(&str, &str)] = if let Some(t) = &self.token {
-            // We need a stack-allocated header — build it inline
-            // Using a local vec since we need the token reference
-            let auth = alloc::format!("Bearer {}", t);
-            let resp = http::get_with_headers(
-                &self.host,
-                &path,
-                &[
-                    ("Authorization", &auth),
-                    ("Accept", "application/vnd.docker.distribution.manifest.v2+json"),
-                ],
-            )?;
-            let body_str = core::str::from_utf8(&resp.body).map_err(|_| RegistryError::Utf8)?;
-            return ImageManifest::from_json(body_str).map_err(RegistryError::Parse);
-        } else {
-            &[]
-        };
-        let resp = http::get_with_headers(&self.host, &path, headers)?;
+        let auth_header;
+        let mut extra: alloc::vec::Vec<(&str, &str)> = alloc::vec![
+            ("Accept", "application/vnd.docker.distribution.manifest.v2+json"),
+        ];
+        if let Some(t) = &self.token {
+            auth_header = alloc::format!("Bearer {}", t);
+            extra.push(("Authorization", &auth_header));
+        }
+        let resp = http::get_with_headers(&self.host, &path, &extra)?;
         let body_str = core::str::from_utf8(&resp.body).map_err(|_| RegistryError::Utf8)?;
         ImageManifest::from_json(body_str).map_err(RegistryError::Parse)
     }
