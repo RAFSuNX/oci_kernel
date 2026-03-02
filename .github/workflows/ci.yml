@@ -83,23 +83,49 @@ jobs:
       - name: Build kernel
         run: make build
 
+      - name: Install qemu-utils (for qemu-img)
+        run: sudo apt-get install -y --no-install-recommends qemu-utils
+
       - name: Build BIOS + UEFI disk images
         env:
           STEM: ${{ steps.stem.outputs.stem }}
         run: make image STEM="$STEM"
 
-      - name: Upload BIOS image
+      - name: Convert raw images to QCOW2 (QEMU native format)
+        env:
+          STEM: ${{ steps.stem.outputs.stem }}
+        run: |
+          qemu-img convert -f raw -O qcow2 -c "${STEM}-bios.img" "${STEM}-bios.qcow2"
+          qemu-img convert -f raw -O qcow2 -c "${STEM}-uefi.img" "${STEM}-uefi.qcow2"
+          echo "Image sizes:"
+          ls -lh "${STEM}"-*.img "${STEM}"-*.qcow2
+
+      - name: Upload BIOS raw image
         uses: actions/upload-artifact@v4
         with:
-          name: bios-image
+          name: bios-raw
           path: ${{ steps.stem.outputs.stem }}-bios.img
           retention-days: 7
 
-      - name: Upload UEFI image
+      - name: Upload UEFI raw image
         uses: actions/upload-artifact@v4
         with:
-          name: uefi-image
+          name: uefi-raw
           path: ${{ steps.stem.outputs.stem }}-uefi.img
+          retention-days: 7
+
+      - name: Upload BIOS QCOW2 image
+        uses: actions/upload-artifact@v4
+        with:
+          name: bios-qcow2
+          path: ${{ steps.stem.outputs.stem }}-bios.qcow2
+          retention-days: 7
+
+      - name: Upload UEFI QCOW2 image
+        uses: actions/upload-artifact@v4
+        with:
+          name: uefi-qcow2
+          path: ${{ steps.stem.outputs.stem }}-uefi.qcow2
           retention-days: 7
 
   # ── GitHub Release (only on version tags) ─────────────────────────────────
@@ -120,19 +146,23 @@ jobs:
           name: OCI Kernel ${{ github.ref_name }}
           generate_release_notes: true
           files: |
-            bios-image/*.img
-            uefi-image/*.img
+            bios-raw/*.img
+            uefi-raw/*.img
+            bios-qcow2/*.qcow2
+            uefi-qcow2/*.qcow2
           body: |
             ## Boot Images
 
-            | File | Format | Firmware |
+            | File | Format | Use case |
             |------|--------|----------|
-            | `*-bios.img` | Raw disk image | Legacy BIOS (widest compatibility) |
-            | `*-uefi.img` | Raw disk image | UEFI (modern hardware) |
+            | `*-bios.img` | Raw disk | BIOS boot, `dd` to USB, QEMU with `format=raw` |
+            | `*-uefi.img` | Raw disk | UEFI boot, `dd` to USB, QEMU with `format=raw` |
+            | `*-bios.qcow2` | QCOW2 | QEMU native (smaller, copy-on-write snapshots) |
+            | `*-uefi.qcow2` | QCOW2 | QEMU native UEFI (smaller, copy-on-write snapshots) |
 
             ## Quick Start
 
-            ### QEMU — BIOS
+            ### QEMU — BIOS (raw)
             ```bash
             qemu-system-x86_64 \
               -drive format=raw,file=oci-kernel-*-bios.img \
@@ -141,21 +171,32 @@ jobs:
               -device virtio-net-pci,netdev=net0
             ```
 
-            ### QEMU — UEFI (requires OVMF)
+            ### QEMU — BIOS (QCOW2, recommended)
             ```bash
             qemu-system-x86_64 \
-              -bios /usr/share/ovmf/x64/OVMF.4m.fd \
-              -drive format=raw,file=oci-kernel-*-uefi.img \
+              -drive format=qcow2,file=oci-kernel-*-bios.qcow2 \
               -serial stdio -m 512M -no-reboot \
               -netdev user,id=net0,hostfwd=tcp::8080-:80 \
               -device virtio-net-pci,netdev=net0
             ```
 
-            ### Real Hardware
+            ### QEMU — UEFI (QCOW2, requires OVMF)
             ```bash
-            # Write BIOS image to USB drive (replace /dev/sdX)
-            sudo dd if=oci-kernel-*-bios.img of=/dev/sdX bs=4M status=progress
+            qemu-system-x86_64 \
+              -bios /usr/share/ovmf/x64/OVMF.4m.fd \
+              -drive format=qcow2,file=oci-kernel-*-uefi.qcow2 \
+              -serial stdio -m 512M -no-reboot \
+              -netdev user,id=net0,hostfwd=tcp::8080-:80 \
+              -device virtio-net-pci,netdev=net0
             ```
 
-            Serial console (COM1, 115200 8N1) is the primary operator interface.
-            Login: `root` / `root`
+            ### Real Hardware (USB / bare metal)
+            ```bash
+            # BIOS systems
+            sudo dd if=oci-kernel-*-bios.img of=/dev/sdX bs=4M status=progress
+            # UEFI systems
+            sudo dd if=oci-kernel-*-uefi.img of=/dev/sdX bs=4M status=progress
+            ```
+
+            Then `curl http://localhost:8080` (QEMU) or `http://<machine-ip>:8080` (real HW).
+            Serial console (COM1, 115200 8N1) — login: `root` / `root`
