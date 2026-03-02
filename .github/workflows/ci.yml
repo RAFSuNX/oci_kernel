@@ -146,7 +146,7 @@ jobs:
         if: github.ref == 'refs/heads/master'
         uses: softprops/action-gh-release@v2
         with:
-          name: OCI Kernel dev (latest master)
+          name: ${{ needs.build.outputs.stem }}
           tag_name: latest
           prerelease: true
           make_latest: false
