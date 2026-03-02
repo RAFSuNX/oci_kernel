@@ -1,7 +1,8 @@
 extern crate alloc;
 
 use alloc::vec;
-use smoltcp::iface::{Config, Interface, SocketSet};
+use smoltcp::iface::{Config, Interface, SocketSet, SocketHandle};
+use smoltcp::socket::tcp::{Socket as TcpSocket, SocketBuffer};
 use smoltcp::wire::{EthernetAddress, IpAddress, IpCidr, Ipv4Address};
 use smoltcp::time::Instant;
 
@@ -34,5 +35,15 @@ impl NetworkStack {
 
     pub fn poll(&mut self, timestamp: Instant) {
         self.iface.poll(timestamp, &mut self.device, &mut self.sockets);
+    }
+
+    /// Create a TCP socket listening on `port` and return its handle.
+    /// The caller stores the handle to interact with the socket later.
+    pub fn setup_tcp_listener(&mut self, port: u16) -> SocketHandle {
+        let rx = SocketBuffer::new(vec![0u8; 1536]);
+        let tx = SocketBuffer::new(vec![0u8; 1536]);
+        let mut socket = TcpSocket::new(rx, tx);
+        socket.listen(port).ok();
+        self.sockets.add(socket)
     }
 }

@@ -28,7 +28,7 @@ mod host;
 mod config;
 
 #[cfg(not(test))]
-use bootloader_api::{BootInfo, entry_point};
+use bootloader_api::{BootInfo, BootloaderConfig, entry_point, config::Mapping};
 #[cfg(not(test))]
 use core::panic::PanicInfo;
 #[cfg(not(test))]
@@ -38,19 +38,29 @@ use linked_list_allocator::LockedHeap;
 #[global_allocator]
 static ALLOCATOR: LockedHeap = LockedHeap::empty();
 
+/// Tell the bootloader to map all of physical RAM at a fixed offset.
+/// Without this, `boot_info.physical_memory_offset` is `None` and memory
+/// initialisation will panic.
 #[cfg(not(test))]
-entry_point!(kernel_main);
+const BOOT_CONFIG: BootloaderConfig = {
+    let mut cfg = BootloaderConfig::new_default();
+    cfg.mappings.physical_memory = Some(Mapping::Dynamic);
+    cfg
+};
+
+#[cfg(not(test))]
+entry_point!(kernel_main, config = &BOOT_CONFIG);
 
 /// Default embedded boot configuration.
 ///
-/// In a full implementation this would be loaded from a disk image or ramdisk.
-/// For Milestone 1 we embed a hard-coded config that starts nginx on port 80.
+/// host: 8080 → QEMU forwards localhost:8080 → kernel:80 → nginx container:80.
+/// Port 8080 avoids needing root on the Linux host for ports < 1024.
 #[cfg(not(test))]
 const DEFAULT_CONFIG_YAML: &str = "\
 containers:
   - image: nginx:latest
     ports:
-      - host: 80
+      - host: 8080
         container: 80
     restart: always
     resources:
@@ -99,25 +109,56 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         boot_cfg.containers.len()
     );
 
-    // ── 7. Start declared containers ─────────────────────────────────────────
-    // Milestone 1: pull + run each container from the boot config.
-    // Full networking (port forwarding, NAT) requires the vswitch to be
-    // wired to smoltcp, which is the next milestone.  For M1 we log intent.
+    // ── 7. Start declared containers + register port forwards ────────────────
     for spec in boot_cfg.containers {
         serial_println!("  Starting container: {} ...", spec.image);
+        let image_name  = spec.image.clone();
+        let port_list   = spec.ports.clone(); // save before spec is moved
         let mut c = container::runtime::Container::create(spec);
         match c.start() {
-            Ok(())  => serial_println!("  [OK] {} running (PID ns isolated)", c.spec.image),
-            Err(e)  => serial_println!("  [ERR] {}: {}", c.spec.image, e),
+            Ok(()) => {
+                serial_println!("  [OK] {} running (PID ns isolated)", image_name);
+                let cid = c.id;
+                container::STORE.lock().register(
+                    cid,
+                    image_name,
+                    container::runtime::ContainerState::Running,
+                );
+                // Register each port mapping so the shell and kernel info show it.
+                {
+                    use container::spec::ActivePortForward;
+                    let mut pf = container::PORT_FORWARDS.lock();
+                    for pm in &port_list {
+                        pf.push(ActivePortForward {
+                            container_id:   cid.0,
+                            host_port:      pm.host,
+                            container_port: pm.container,
+                        });
+                        serial_println!(
+                            "  [OK] Port forward: host:{} -> container:{}",
+                            pm.host, pm.container
+                        );
+                    }
+                }
+            }
+            Err(e) => serial_println!("  [ERR] {}: {}", image_name, e),
         }
-        // TODO M2: pull image layers from registry, unpack into overlayfs,
-        //          spawn init process in namespace, wire port-forward rules.
     }
 
-    serial_println!("OCI Kernel ready.  Type 'help' on the serial console.");
+    // ── 8. HTTP listener ──────────────────────────────────────────────────────
+    // Open a smoltcp TCP socket on port 80 (the container's port).
+    // QEMU forwards host:8080 → kernel:80 via hostfwd (see Makefile).
+    // While the operator is at the shell, the serial read loop polls the
+    // network so HTTP requests are served concurrently.
+    net::setup_http_listener(80);
 
-    // ── 8. Serial getty ───────────────────────────────────────────────────────
+    serial_println!("OCI Kernel ready.  Type 'help' on the serial console.");
+    serial_println!("HTTP: curl http://localhost:8080  (QEMU) or <machine-ip>:8080 (real HW)");
+
+    // ── 9. Serial getty ───────────────────────────────────────────────────────
     // `Getty::run()` is diverging — it loops forever reading from COM1.
+    // The serial read loop calls `net::serve_http_once()` between keystrokes
+    // so HTTP requests are handled while the operator is idle.
     host::getty::Getty::new().run()
 }
 

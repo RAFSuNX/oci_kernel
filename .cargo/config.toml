@@ -1,9 +1,7 @@
 [unstable]
 # json-target-spec is needed for the custom kernel target JSON file.
-# build-std is NOT set here because it would apply globally (including
-# `cargo test --target x86_64-unknown-linux-gnu`) causing duplicate lang
-# items.  It is passed explicitly in the Makefile build command instead.
+# build-std is NOT set here (would cause duplicate lang items in `cargo test`).
+# --target and -Zbuild-std are passed explicitly in the Makefile instead.
+# The [build] default target is also NOT set here: if it were, the runner
+# (a host binary) would inherit it and fail to find `core`.
 json-target-spec = true
-
-[build]
-target = "kernel/x86_64-oci-kernel.json"

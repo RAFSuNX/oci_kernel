@@ -121,6 +121,20 @@ impl VSwitch {
     pub fn allow_container_to_container(&self, _src: ContainerId, _dst: ContainerId) -> bool {
         false
     }
+
+    /// Look up a port-forward rule for an inbound connection on `host_port`.
+    ///
+    /// Returns `(container_id, container_port)` if a matching rule exists.
+    /// Called by the M2 smoltcp proxy when a new TCP connection arrives.
+    pub fn lookup_port_forward(
+        &self,
+        rules: &[crate::container::spec::ActivePortForward],
+        host_port: u16,
+    ) -> Option<(u64, u16)> {
+        rules.iter()
+            .find(|r| r.host_port == host_port)
+            .map(|r| (r.container_id, r.container_port))
+    }
 }
 
 #[cfg(test)]

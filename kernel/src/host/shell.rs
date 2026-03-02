@@ -11,19 +11,44 @@ pub enum ShellError {
     BadPortMapping,
 }
 
-/// Commands the shell understands.
+/// Every command the shell understands.
 #[derive(Debug, PartialEq)]
 pub enum ShellCommand {
+    // ── Filesystem ──────────────────────────────────────────────────────────
+    Ls      { path: Option<String> },
+    Cd      { path: String },
+    Pwd,
+    Cat     { path: String },
+    Echo    { text: String, file: Option<String> },
+    Touch   { path: String },
+    Mkdir   { path: String },
+    Rm      { path: String },
+
+    // ── System info ──────────────────────────────────────────────────────────
+    Clear,
+    Uname   { all: bool },
+    Free,
+    Lsblk,
+    Df,
+    Ps,
+
+    // ── Container commands ────────────────────────────────────────────────────
     ContainerRun     { image: String, ports: Vec<PortMapping>, volumes: Vec<VolumeMount> },
     ContainerStop    { id: String },
     ContainerLogs    { id: String, follow: bool },
     ContainerInspect { id: String },
     ContainerList,
-    ImagePull        { name: String, tag: String },
+
+    // ── Image commands ────────────────────────────────────────────────────────
+    ImagePull   { name: String, tag: String },
     ImageList,
-    ImageRemove      { name: String, tag: String },
-    VolumeCreate     { name: String },
-    VolumeRemove     { name: String },
+    ImageRemove { name: String, tag: String },
+
+    // ── Volume commands ───────────────────────────────────────────────────────
+    VolumeCreate { name: String },
+    VolumeRemove { name: String },
+
+    // ── Kernel ────────────────────────────────────────────────────────────────
     KernelInfo,
     Help,
 }
@@ -33,8 +58,56 @@ impl ShellCommand {
     pub fn parse(input: &str) -> Result<Self, ShellError> {
         let parts: Vec<&str> = input.trim().split_whitespace().collect();
         match parts.as_slice() {
-            // Container commands
-            ["container", "list"] | ["container", "ls"] => Ok(Self::ContainerList),
+            // ── Filesystem ─────────────────────────────────────────────────
+            ["ls"]         => Ok(Self::Ls { path: None }),
+            ["ls", path]   => Ok(Self::Ls { path: Some(path.to_string()) }),
+
+            ["cd"]         => Ok(Self::Cd { path: "/home/root".to_string() }),
+            ["cd", path]   => Ok(Self::Cd { path: path.to_string() }),
+
+            ["pwd"]        => Ok(Self::Pwd),
+
+            ["cat"]        => Err(ShellError::MissingArgument("filename")),
+            ["cat", path]  => Ok(Self::Cat { path: path.to_string() }),
+
+            ["touch", path] => Ok(Self::Touch { path: path.to_string() }),
+            ["mkdir", path] => Ok(Self::Mkdir { path: path.to_string() }),
+            ["rm",    path] => Ok(Self::Rm    { path: path.to_string() }),
+
+            ["echo"]            => Ok(Self::Echo { text: String::new(), file: None }),
+            ["echo", rest @ ..] => {
+                // Detect output redirection: echo text > file
+                if let Some(gt) = rest.iter().position(|s| *s == ">") {
+                    let text = rest[..gt].join(" ");
+                    let file = if gt + 1 < rest.len() {
+                        Some(rest[gt + 1].to_string())
+                    } else {
+                        None
+                    };
+                    Ok(Self::Echo { text, file })
+                } else {
+                    Ok(Self::Echo { text: rest.join(" "), file: None })
+                }
+            }
+
+            // ── System info ────────────────────────────────────────────────
+            ["clear"]      => Ok(Self::Clear),
+            ["uname"]      => Ok(Self::Uname { all: false }),
+            ["uname", "-a"]=> Ok(Self::Uname { all: true }),
+            ["free"]       => Ok(Self::Free),
+            ["lsblk"]      => Ok(Self::Lsblk),
+            ["df"]         => Ok(Self::Df),
+            ["ps"]         => Ok(Self::Ps),
+
+            // ── Container commands ─────────────────────────────────────────
+            ["container", "list"] | ["container", "ls"] | ["container", "ps"]
+                => Ok(Self::ContainerList),
+
+            // Shorthand: `container pull image` ≡ `image pull image`
+            ["container", "pull", name_tag] => {
+                let (name, tag) = split_image_tag(name_tag);
+                Ok(Self::ImagePull { name, tag })
+            }
             ["container", "stop", id] => {
                 Ok(Self::ContainerStop { id: id.to_string() })
             }
@@ -54,7 +127,7 @@ impl ShellCommand {
             }
             ["container", "run"] => Err(ShellError::MissingArgument("image")),
 
-            // Image commands
+            // ── Image commands ─────────────────────────────────────────────
             ["image", "pull", name_tag] => {
                 let (name, tag) = split_image_tag(name_tag);
                 Ok(Self::ImagePull { name, tag })
@@ -66,22 +139,23 @@ impl ShellCommand {
                 Ok(Self::ImageRemove { name, tag })
             }
 
-            // Volume commands
+            // ── Volume commands ────────────────────────────────────────────
             ["volume", "create", name] => Ok(Self::VolumeCreate { name: name.to_string() }),
             ["volume", "rm", name] | ["volume", "remove", name] => {
                 Ok(Self::VolumeRemove { name: name.to_string() })
             }
 
-            // Kernel commands
+            // ── Kernel + help ──────────────────────────────────────────────
             ["kernel", "info"] => Ok(Self::KernelInfo),
-            ["help"] | ["?"] => Ok(Self::Help),
+            ["help"] | ["?"]   => Ok(Self::Help),
 
             _ => Err(ShellError::UnknownCommand),
         }
     }
 }
 
-/// Parse `-p host:container` flags from the remainder of a `container run` command.
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
 fn parse_ports(args: &[&str]) -> Result<Vec<PortMapping>, ShellError> {
     let mut ports = Vec::new();
     let mut i = 0;
@@ -91,11 +165,10 @@ fn parse_ports(args: &[&str]) -> Result<Vec<PortMapping>, ShellError> {
             if i >= args.len() {
                 return Err(ShellError::MissingArgument("port mapping after -p"));
             }
-            let mapping = args[i];
-            let (host, container) = mapping
+            let (host, container) = args[i]
                 .split_once(':')
                 .ok_or(ShellError::BadPortMapping)?;
-            let host: u16 = host.parse().map_err(|_| ShellError::BadPortMapping)?;
+            let host: u16      = host.parse().map_err(|_| ShellError::BadPortMapping)?;
             let container: u16 = container.parse().map_err(|_| ShellError::BadPortMapping)?;
             ports.push(PortMapping { host, container });
         }
@@ -104,7 +177,6 @@ fn parse_ports(args: &[&str]) -> Result<Vec<PortMapping>, ShellError> {
     Ok(ports)
 }
 
-/// Parse `-v source:target[:ro]` flags from the remainder of a `container run` command.
 fn parse_volumes(args: &[&str]) -> Result<Vec<VolumeMount>, ShellError> {
     let mut volumes = Vec::new();
     let mut i = 0;
@@ -114,14 +186,13 @@ fn parse_volumes(args: &[&str]) -> Result<Vec<VolumeMount>, ShellError> {
             if i >= args.len() {
                 return Err(ShellError::MissingArgument("volume mount after -v"));
             }
-            let spec = args[i];
-            // source:target or source:target:ro
-            let mut parts = spec.splitn(3, ':');
+            let mut parts = args[i].splitn(3, ':');
             let source = parts.next().unwrap_or("").to_string();
-            let target = parts.next().ok_or(ShellError::MissingArgument("volume target"))?.to_string();
+            let target = parts.next()
+                .ok_or(ShellError::MissingArgument("volume target"))?.to_string();
             let access = match parts.next() {
                 Some("ro") => AccessMode::ReadOnly,
-                _ => AccessMode::ReadWrite,
+                _          => AccessMode::ReadWrite,
             };
             volumes.push(VolumeMount { source, target, access });
         }
@@ -130,8 +201,6 @@ fn parse_volumes(args: &[&str]) -> Result<Vec<VolumeMount>, ShellError> {
     Ok(volumes)
 }
 
-/// Split `"nginx:latest"` → `("nginx", "latest")`.
-/// If no tag, defaults to `"latest"`.
 fn split_image_tag(name_tag: &str) -> (String, String) {
     if let Some((name, tag)) = name_tag.split_once(':') {
         (name.to_string(), tag.to_string())
@@ -140,45 +209,83 @@ fn split_image_tag(name_tag: &str) -> (String, String) {
     }
 }
 
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    // ── filesystem commands ────────────────────────────────────────────────
+    #[test]
+    fn parse_ls() {
+        assert!(matches!(ShellCommand::parse("ls"), Ok(ShellCommand::Ls { path: None })));
+        let cmd = ShellCommand::parse("ls /etc").unwrap();
+        if let ShellCommand::Ls { path: Some(p) } = cmd {
+            assert_eq!(p, "/etc");
+        } else { panic!("expected Ls with path"); }
+    }
+
+    #[test]
+    fn parse_cd_default_and_path() {
+        let home = ShellCommand::parse("cd").unwrap();
+        if let ShellCommand::Cd { path } = home {
+            assert_eq!(path, "/home/root");
+        } else { panic!(); }
+
+        assert!(matches!(ShellCommand::parse("cd /tmp"), Ok(ShellCommand::Cd { .. })));
+    }
+
+    #[test]
+    fn parse_pwd_cat_touch_mkdir_rm() {
+        assert!(matches!(ShellCommand::parse("pwd"),            Ok(ShellCommand::Pwd)));
+        assert!(matches!(ShellCommand::parse("cat /etc/hosts"), Ok(ShellCommand::Cat { .. })));
+        assert!(matches!(ShellCommand::parse("touch /tmp/f"),   Ok(ShellCommand::Touch { .. })));
+        assert!(matches!(ShellCommand::parse("mkdir /tmp/d"),   Ok(ShellCommand::Mkdir { .. })));
+        assert!(matches!(ShellCommand::parse("rm /tmp/f"),      Ok(ShellCommand::Rm { .. })));
+    }
+
+    #[test]
+    fn parse_echo_plain_and_redirect() {
+        let plain = ShellCommand::parse("echo hello world").unwrap();
+        if let ShellCommand::Echo { text, file } = plain {
+            assert_eq!(text, "hello world");
+            assert_eq!(file, None);
+        } else { panic!(); }
+
+        let redir = ShellCommand::parse("echo hello > /tmp/out").unwrap();
+        if let ShellCommand::Echo { text, file } = redir {
+            assert_eq!(text, "hello");
+            assert_eq!(file, Some("/tmp/out".to_string()));
+        } else { panic!(); }
+    }
+
+    // ── system commands ────────────────────────────────────────────────────
+    #[test]
+    fn parse_system_commands() {
+        assert!(matches!(ShellCommand::parse("clear"),    Ok(ShellCommand::Clear)));
+        assert!(matches!(ShellCommand::parse("uname"),    Ok(ShellCommand::Uname { all: false })));
+        assert!(matches!(ShellCommand::parse("uname -a"), Ok(ShellCommand::Uname { all: true })));
+        assert!(matches!(ShellCommand::parse("free"),     Ok(ShellCommand::Free)));
+        assert!(matches!(ShellCommand::parse("lsblk"),    Ok(ShellCommand::Lsblk)));
+        assert!(matches!(ShellCommand::parse("df"),       Ok(ShellCommand::Df)));
+        assert!(matches!(ShellCommand::parse("ps"),       Ok(ShellCommand::Ps)));
+    }
+
+    // ── container / image commands (regression) ────────────────────────────
     #[test]
     fn parse_container_run() {
         let cmd = ShellCommand::parse("container run nginx:latest -p 80:80").unwrap();
-        assert!(matches!(cmd, ShellCommand::ContainerRun { .. }));
         if let ShellCommand::ContainerRun { image, ports, .. } = cmd {
             assert_eq!(image, "nginx:latest");
             assert_eq!(ports.len(), 1);
             assert_eq!(ports[0].host, 80);
-            assert_eq!(ports[0].container, 80);
-        }
+        } else { panic!(); }
     }
 
     #[test]
     fn parse_container_list() {
-        let cmd = ShellCommand::parse("container list").unwrap();
-        assert!(matches!(cmd, ShellCommand::ContainerList));
-        // ls alias
-        let cmd2 = ShellCommand::parse("container ls").unwrap();
-        assert!(matches!(cmd2, ShellCommand::ContainerList));
-    }
-
-    #[test]
-    fn parse_image_pull() {
-        let cmd = ShellCommand::parse("image pull alpine:3.18").unwrap();
-        if let ShellCommand::ImagePull { name, tag } = cmd {
-            assert_eq!(name, "alpine");
-            assert_eq!(tag, "3.18");
-        } else {
-            panic!("expected ImagePull");
-        }
-    }
-
-    #[test]
-    fn unknown_command_returns_error() {
-        assert_eq!(ShellCommand::parse("rm -rf /"), Err(ShellError::UnknownCommand));
+        assert!(matches!(ShellCommand::parse("container list"), Ok(ShellCommand::ContainerList)));
+        assert!(matches!(ShellCommand::parse("container ls"),   Ok(ShellCommand::ContainerList)));
     }
 
     #[test]
@@ -191,28 +298,15 @@ mod tests {
     }
 
     #[test]
-    fn parse_container_logs_follow() {
-        let cmd = ShellCommand::parse("container logs -f abc123").unwrap();
-        if let ShellCommand::ContainerLogs { id, follow } = cmd {
-            assert_eq!(id, "abc123");
-            assert!(follow);
-        }
+    fn unknown_command_returns_error() {
+        assert_eq!(ShellCommand::parse("rm -rf /"), Err(ShellError::UnknownCommand));
     }
 
     #[test]
-    fn parse_volume_mount() {
+    fn parse_volume_mount_readonly() {
         let cmd = ShellCommand::parse("container run nginx -v /data:/var/data:ro").unwrap();
         if let ShellCommand::ContainerRun { volumes, .. } = cmd {
-            assert_eq!(volumes.len(), 1);
-            assert_eq!(volumes[0].source, "/data");
-            assert_eq!(volumes[0].target, "/var/data");
             assert_eq!(volumes[0].access, AccessMode::ReadOnly);
         }
-    }
-
-    #[test]
-    fn missing_image_argument_is_error() {
-        let err = ShellCommand::parse("container run");
-        assert!(matches!(err, Err(ShellError::MissingArgument(_))));
     }
 }

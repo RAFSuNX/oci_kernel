@@ -1,5 +1,5 @@
 extern crate alloc;
-use alloc::{collections::BTreeMap, vec::Vec};
+use alloc::{collections::BTreeMap, string::String, vec::Vec};
 
 use super::runtime::{ContainerId, ContainerState};
 
@@ -7,6 +7,7 @@ use super::runtime::{ContainerId, ContainerState};
 #[derive(Debug)]
 pub struct ContainerRecord {
     pub id:    ContainerId,
+    pub image: String,
     pub state: ContainerState,
 }
 
@@ -21,8 +22,8 @@ impl ContainerStore {
     }
 
     /// Register a new container with an initial state.
-    pub fn register(&mut self, id: ContainerId, state: ContainerState) {
-        self.entries.insert(id.0, ContainerRecord { id, state });
+    pub fn register(&mut self, id: ContainerId, image: String, state: ContainerState) {
+        self.entries.insert(id.0, ContainerRecord { id, image, state });
     }
 
     pub fn get(&self, id: ContainerId) -> Option<&ContainerRecord> {
@@ -56,7 +57,7 @@ mod tests {
     fn container_store_tracks_running() {
         let mut store = ContainerStore::new();
         let id = ContainerId::new();
-        store.register(id, ContainerState::Running);
+        store.register(id, String::from("nginx:latest"), ContainerState::Running);
         assert_eq!(store.get(id).unwrap().state, ContainerState::Running);
         assert_eq!(store.running_count(), 1);
     }
@@ -64,9 +65,9 @@ mod tests {
     #[test]
     fn running_count_only_counts_running() {
         let mut store = ContainerStore::new();
-        store.register(ContainerId::new(), ContainerState::Running);
-        store.register(ContainerId::new(), ContainerState::Stopped);
-        store.register(ContainerId::new(), ContainerState::Created);
+        store.register(ContainerId::new(), String::from("a"), ContainerState::Running);
+        store.register(ContainerId::new(), String::from("b"), ContainerState::Stopped);
+        store.register(ContainerId::new(), String::from("c"), ContainerState::Created);
         assert_eq!(store.running_count(), 1);
     }
 
@@ -74,7 +75,7 @@ mod tests {
     fn remove_container_from_store() {
         let mut store = ContainerStore::new();
         let id = ContainerId::new();
-        store.register(id, ContainerState::Stopped);
+        store.register(id, String::from("test"), ContainerState::Stopped);
         assert!(store.remove(id).is_some());
         assert!(store.get(id).is_none());
     }

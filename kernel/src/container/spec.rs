@@ -1,11 +1,25 @@
 extern crate alloc;
 use alloc::{string::String, vec::Vec};
 
-/// How host ports map to container ports.
+/// How host ports map to container ports (declared in `container run -p`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct PortMapping {
     pub host:      u16,
     pub container: u16,
+}
+
+/// A live port-forward rule tracked by the kernel.
+///
+/// The full chain:
+///   QEMU `hostfwd=tcp::host_port-:host_port`
+///     → smoltcp TCP socket on `host_port`  (M2: proxy socket)
+///       → VSwitch routes to container `container_id` on `container_port`
+///         → container process listening on `container_port`
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ActivePortForward {
+    pub container_id:   u64,  // ContainerId.0
+    pub host_port:      u16,  // bound on QEMU hostfwd / smoltcp
+    pub container_port: u16,  // target inside the container
 }
 
 /// Volume accessibility.
